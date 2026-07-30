@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interface IA Core</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <canvas id="coreCanvas"></canvas>
+
+        <div class="interface-container">
+            <div id="chatLog" class="chat-log">
+                <div class="bot-msg">Sistemas online. Como posso te ajudar?</div>
+            </div>
+            
+            <form id="chatForm" class="input-form">
+                <input type="text" id="userInput" placeholder="Escreva sua pergunta..." autocomplete="off" required>
+                <button type="submit">Enviar</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
