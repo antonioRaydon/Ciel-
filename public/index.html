@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interface IA Core</title>
+    <title>Interface IA Core - CIEL</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,12 +12,17 @@
         <canvas id="coreCanvas"></canvas>
 
         <div class="interface-container">
+            <!-- Botão Mute / Unmute -->
+            <button id="muteBtn" class="mute-btn" title="Alternar som">🔊</button>
+
             <div id="chatLog" class="chat-log">
                 <div class="bot-msg">Sistemas online. Como posso te ajudar?</div>
             </div>
             
             <form id="chatForm" class="input-form">
-                <input type="text" id="userInput" placeholder="Escreva sua pergunta..." autocomplete="off" required>
+                <input type="text" id="userInput" placeholder="Escreva sua pergunta ou use o microfone..." autocomplete="off" required>
+                <!-- Botão de Microfone -->
+                <button type="button" id="micBtn" class="mic-btn" title="Falar por voz">🎙️</button>
                 <button type="submit">Enviar</button>
             </form>
         </div>
