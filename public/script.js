@@ -8,13 +8,17 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
-// Estados de Animação
+// --- ESTADOS DE ANIMAÇÃO ---
 let transitionProgress = 0;
 let isProcessing = false;
 let isListening = false;
 let pulseTimer = 0;
 
 let rotX = 0, rotY = 0, rotZ = 0;
+
+// Variável para transição suave de forma (0 = Merkaba, 1 = Triângulos Neon)
+let shapeMorphProgress = 0;
+let lastBassTime = 0;
 
 // Efeitos Especiais
 let shockwaveRadius = 0;
@@ -23,10 +27,42 @@ let shockwaveAlpha = 0;
 
 let isMuted = false;
 
-// EFEITO 1: Anéis de Áudio Circular (Equalizador ao Ouvir)
+// --- CONFIGURAÇÃO WEB AUDIO API (CAPTURA DA SAÍDA DO PC) ---
+let audioCtx = null;
+let analyser = null;
+let dataArray = null;
+let isMusicSyncActive = false;
+let bassBoost = 0;
+
+function setupAudioAnalyser(stream) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 64; // Tamanho do analisador de frequência
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+}
+
+function getBassIntensity() {
+    if (!analyser || !isMusicSyncActive || !dataArray) return 0;
+    
+    analyser.getByteFrequencyData(dataArray);
+    
+    // Captura as frequências graves (os primeiros bins = bumbo/kick da música)
+    let bassSum = 0;
+    const bassBins = 4;
+    for (let i = 0; i < bassBins; i++) {
+        bassSum += dataArray[i];
+    }
+    
+    return (bassSum / bassBins) * 0.8;
+}
+
+// Elementos Visuais
 let audioWaveSegments = 32;
 
-// EFEITO 2: Partículas de Poeira / Plumas com Gravidade Inversa
 const lightPlumes = Array.from({ length: 90 }, () => ({
     x: (Math.random() - 0.5) * 500,
     y: (Math.random() - 0.5) * 500,
@@ -38,7 +74,29 @@ const lightPlumes = Array.from({ length: 90 }, () => ({
     history: []
 }));
 
-// Geometria Merkaba 3D
+// Partículas para explosão do grave no modo música (Com limite para evitar travamentos)
+let musicBurstParticles = [];
+const MAX_BURST_PARTICLES = 40;
+
+function createMusicBurst() {
+    if (musicBurstParticles.length >= MAX_BURST_PARTICLES) return;
+    
+    const particleCount = 8;
+    for (let i = 0; i < particleCount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 5 + 2;
+        musicBurstParticles.push({
+            x: 0,
+            y: 0,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            size: Math.random() * 2.5 + 1.5,
+            alpha: 1,
+            color: Math.random() < 0.5 ? '#00ffc8' : '#ffd782'
+        });
+    }
+}
+
 const tetraVertices = [
     [ 1,  1,  1],
     [-1, -1,  1],
@@ -68,6 +126,7 @@ function rotate3D(x, y, z, rx, ry, rz) {
     return { x: x3, y: y3, z: z2 };
 }
 
+// --- RENDERIZADOR DO CANVAS 3D ---
 function drawCore() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
@@ -77,14 +136,29 @@ function drawCore() {
     const targetProgress = isProcessing ? 1 : 0;
     transitionProgress += (targetProgress - transitionProgress) * 0.04;
 
+    // Transição de forma suave
+    const targetMorph = isMusicSyncActive ? 1 : 0;
+    shapeMorphProgress += (targetMorph - shapeMorphProgress) * 0.08;
+
     pulseTimer += 0.02 + (0.04 * transitionProgress);
     const pulse = Math.sin(pulseTimer) * (8 + (15 * transitionProgress));
     
-    // Diminui e acalma ao escutar
-    let sizeMultiplier = isListening ? 0.7 : 1.0;
-    const baseSize = ((Math.min(canvas.width, canvas.height) * 0.13) + pulse) * sizeMultiplier;
+    // Obter o pulso do grave da música
+    bassBoost = getBassIntensity();
 
-    const speed = isListening ? 0.002 : (0.005 + (0.015 * transitionProgress));
+    // Explosão controlada de luz nos graves
+    const now = Date.now();
+    if (isMusicSyncActive && bassBoost > 35 && (now - lastBassTime > 250)) {
+        createMusicBurst();
+        lastBassTime = now;
+    }
+
+    let sizeMultiplier = isListening ? 0.7 : 1.0;
+    const baseSize = (((Math.min(canvas.width, canvas.height) * 0.13) + pulse) * sizeMultiplier) + bassBoost;
+
+    // Aceleração sutil de rotação com a batida
+    const musicSpeedBoost = bassBoost * 0.0003;
+    const speed = isListening ? 0.002 : (0.005 + (0.015 * transitionProgress) + musicSpeedBoost);
     rotX += speed * 0.7;
     rotY += speed * 1.1;
     rotZ += speed * 0.5;
@@ -94,34 +168,16 @@ function drawCore() {
 
     ctx.globalCompositeOperation = 'lighter';
 
-    // 1. AURA CELESTIAL
-    const totalRays = Math.floor(48 + (24 * transitionProgress));
-    const rayLength = baseSize * (2.4 + (1.0 * transitionProgress));
+    // ------------------------------------------------------------------
+    // EFEITOS GERAIS (Sempre visíveis)
+    // ------------------------------------------------------------------
 
-    for (let i = 0; i < totalRays; i++) {
-        const angle = (Math.PI * 2 / totalRays) * i + (rotZ * 0.3);
-        const rayLen = rayLength + Math.sin(pulseTimer * 1.5 + i) * (10 + (20 * transitionProgress));
-        
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(angle) * rayLen, Math.sin(angle) * rayLen);
-        
-        const isGold = i % 2 === 0;
-        ctx.strokeStyle = isGold 
-            ? `rgba(255, 215, 130, ${0.15 + (0.3 * transitionProgress)})`
-            : `rgba(200, 245, 255, ${0.12 + (0.25 * transitionProgress)})`;
-
-        ctx.lineWidth = isGold ? 1.5 : 0.8;
-        ctx.stroke();
-    }
-
-    // 2. EFEITO 1: ONDAS DE ÁUDIO CIRCULAR (Ativas quando está ouvindo o microfone)
+    // EQUALIZADOR CIRCULAR (QUANDO O MICROFONE ESTÁ LIGADO)
     if (isListening) {
         const waveRadius = baseSize * 1.8;
         ctx.beginPath();
         for (let i = 0; i <= audioWaveSegments; i++) {
             const angle = (Math.PI * 2 / audioWaveSegments) * i;
-            // Simula frequência de voz com modulação senoidal
             const waveAmp = Math.sin(pulseTimer * 8 + i * 0.8) * 12 + Math.cos(pulseTimer * 5 + i * 1.5) * 8;
             const r = waveRadius + waveAmp;
             
@@ -135,16 +191,9 @@ function drawCore() {
         ctx.strokeStyle = 'rgba(0, 255, 200, 0.7)';
         ctx.lineWidth = 2;
         ctx.stroke();
-
-        // Anel Secundário Suave
-        ctx.beginPath();
-        ctx.arc(0, 0, waveRadius * 1.25 + Math.sin(pulseTimer * 4) * 6, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255, 215, 130, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
     }
 
-    // 3. ONDA DE CHOQUE / IMPACTO
+    // ONDA DE CHOQUE DA ENTRADA DE MENSAGEM
     if (shockwaveActive) {
         shockwaveRadius += 12 + (10 * transitionProgress);
         shockwaveAlpha -= 0.018;
@@ -160,64 +209,160 @@ function drawCore() {
         }
     }
 
-    // 4. AURÉOLAS / ANÉIS SAGRADOS
-    for (let h = 0; h < 3; h++) {
-        const ringRadius = baseSize * (1.5 + h * 0.35);
-        ctx.beginPath();
-        
-        for (let i = 0; i <= 36; i++) {
-            const theta = (Math.PI * 2 / 36) * i;
-            let px = ringRadius * Math.cos(theta);
-            let py = ringRadius * Math.sin(theta);
-            let pz = Math.sin(theta * 2 + pulseTimer) * 20;
+    // ------------------------------------------------------------------
+    // FORMA 1: MERKABA 3D + AURA + ANÉIS (MODO NORMAL)
+    // ------------------------------------------------------------------
+    if (shapeMorphProgress < 0.99) {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - shapeMorphProgress);
 
-            let rot = rotate3D(px, py, pz, rotX * (0.4 + h * 0.2), rotY * (0.3 - h * 0.1), rotZ * 0.5);
-            let proj = project3D(rot.x, rot.y, rot.z, 1);
+        // Aura Celestial
+        const totalRays = Math.floor(48 + (24 * transitionProgress));
+        const rayLength = baseSize * (2.4 + (1.0 * transitionProgress));
 
-            if (i === 0) ctx.moveTo(proj.x, proj.y);
-            else ctx.lineTo(proj.x, proj.y);
+        for (let i = 0; i < totalRays; i++) {
+            const angle = (Math.PI * 2 / totalRays) * i + (rotZ * 0.3);
+            const rayLen = rayLength + Math.sin(pulseTimer * 1.5 + i) * (10 + (20 * transitionProgress)) + (bassBoost * 0.5);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.cos(angle) * rayLen, Math.sin(angle) * rayLen);
+            
+            const isGold = i % 2 === 0;
+            ctx.strokeStyle = isGold 
+                ? `rgba(255, 215, 130, ${0.15 + (0.3 * transitionProgress)})`
+                : `rgba(200, 245, 255, ${0.12 + (0.25 * transitionProgress)})`;
+
+            ctx.lineWidth = isGold ? 1.5 : 0.8;
+            ctx.stroke();
         }
 
-        ctx.strokeStyle = h === 0 
-            ? `rgba(255, 223, 150, ${0.7 + (0.3 * transitionProgress)})` 
-            : `rgba(180, 235, 255, ${0.4 + (0.4 * transitionProgress)})`;
-        ctx.lineWidth = 1.3;
-        ctx.stroke();
-    }
-
-    // 5. MERKABA 3D
-    function drawTetrahedron(scale, color, rx, ry, rz, invert) {
-        const sign = invert ? -1 : 1;
-        const transformedVerts = tetraVertices.map(v => {
-            let rot = rotate3D(v[0] * sign, v[1] * sign, v[2] * sign, rx, ry, rz);
-            return project3D(rot.x, rot.y, rot.z, baseSize * scale);
-        });
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.8 + (1.0 * transitionProgress);
-
-        tetraEdges.forEach(edge => {
-            const p1 = transformedVerts[edge[0]];
-            const p2 = transformedVerts[edge[1]];
+        // Auréolas / Anéis Sagrados
+        for (let h = 0; h < 3; h++) {
+            const ringRadius = baseSize * (1.5 + h * 0.35);
             ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
+            
+            for (let i = 0; i <= 36; i++) {
+                const theta = (Math.PI * 2 / 36) * i;
+                let px = ringRadius * Math.cos(theta);
+                let py = ringRadius * Math.sin(theta);
+                let pz = Math.sin(theta * 2 + pulseTimer) * 20;
+
+                let rot = rotate3D(px, py, pz, rotX * (0.4 + h * 0.2), rotY * (0.3 - h * 0.1), rotZ * 0.5);
+                let proj = project3D(rot.x, rot.y, rot.z, 1);
+
+                if (i === 0) ctx.moveTo(proj.x, proj.y);
+                else ctx.lineTo(proj.x, proj.y);
+            }
+
+            ctx.strokeStyle = h === 0 
+                ? `rgba(255, 223, 150, ${0.7 + (0.3 * transitionProgress)})` 
+                : `rgba(180, 235, 255, ${0.4 + (0.4 * transitionProgress)})`;
+            ctx.lineWidth = 1.3;
             ctx.stroke();
-        });
+        }
+
+        // Merkaba 3D
+        function drawTetrahedron(scale, color, rx, ry, rz, invert) {
+            const sign = invert ? -1 : 1;
+            const transformedVerts = tetraVertices.map(v => {
+                let rot = rotate3D(v[0] * sign, v[1] * sign, v[2] * sign, rx, ry, rz);
+                return project3D(rot.x, rot.y, rot.z, baseSize * scale);
+            });
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.8 + (1.0 * transitionProgress);
+
+            tetraEdges.forEach(edge => {
+                const p1 = transformedVerts[edge[0]];
+                const p2 = transformedVerts[edge[1]];
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            });
+        }
+
+        drawTetrahedron(0.95, 'rgba(255, 230, 170, 0.95)', rotX, rotY, rotZ, false);
+        drawTetrahedron(0.95, 'rgba(170, 240, 255, 0.9)', -rotX * 0.8, -rotY * 0.9, rotZ * 1.2, true);
+
+        ctx.restore();
     }
 
-    drawTetrahedron(0.95, 'rgba(255, 230, 170, 0.95)', rotX, rotY, rotZ, false);
-    drawTetrahedron(0.95, 'rgba(170, 240, 255, 0.9)', -rotX * 0.8, -rotY * 0.9, rotZ * 1.2, true);
+    // ------------------------------------------------------------------
+    // FORMA 2: DOIS TRIÂNGULOS EM NEON (MODO MÚSICA)
+    // ------------------------------------------------------------------
+    if (shapeMorphProgress > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, shapeMorphProgress);
 
-    // 6. EFEITO 2: GRAVIDADE INVERSA DAS PARTÍCULAS (Atração ao Centro no Estado "Pensando")
+        function drawTriangle(radius, angleOffset, color, width) {
+            ctx.beginPath();
+            for (let i = 0; i < 3; i++) {
+                const angle = angleOffset + (i * Math.PI * 2 / 3);
+                const x = Math.cos(angle) * radius;
+                const y = Math.sin(angle) * radius;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.stroke();
+        }
+
+        // Reduz a velocidade de rotação do modo música para um giro mais suave
+        const smoothRot = rotZ * 0.1;
+
+        // Triângulo Interno
+        const innerRadius = (baseSize * 0.8) + (bassBoost * 0.85);
+        drawTriangle(innerRadius, smoothRot, '#00ffc8', 2.5);
+
+        // Triângulo Externo
+        const outerRadius = (baseSize * 1.4) + (bassBoost * 0.4);
+        drawTriangle(outerRadius, -smoothRot * 0.5, '#ffd782', 1.8);
+
+        // Conectores
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (i * Math.PI / 3) + rotZ;
+            ctx.moveTo(Math.cos(angle) * innerRadius, Math.sin(angle) * innerRadius);
+            ctx.lineTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+        }
+        ctx.strokeStyle = 'rgba(0, 255, 200, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // PARTÍCULAS DE EXPLOSÃO
+    for (let i = musicBurstParticles.length - 1; i >= 0; i--) {
+        let p = musicBurstParticles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= 0.03;
+
+        if (p.alpha <= 0) {
+            musicBurstParticles.splice(i, 1);
+            continue;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.alpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+
+    // POEIRA CELESTIAL
     lightPlumes.forEach(p => {
         if (isProcessing) {
-            // Puxa as partículas em direção ao centro (0, 0, 0)
             p.x *= 0.94;
             p.y *= 0.94;
             p.z *= 0.94;
 
-            // Se chegar muito perto do centro, reaparece nas bordas para continuar o fluxo de atração
             if (Math.abs(p.x) < 15 && Math.abs(p.y) < 15) {
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 300 + Math.random() * 150;
@@ -227,7 +372,6 @@ function drawCore() {
                 p.history = [];
             }
         } else {
-            // Movimento Normal Flutuante Subindo
             p.y += p.speedY * (isListening ? 0.3 : 1.0);
             if (p.y < -260) {
                 p.y = 260;
@@ -263,7 +407,7 @@ function drawCore() {
         ctx.fill();
     });
 
-    // 7. NÚCLEO DIVINO DE LUZ
+    // NÚCLEO DIVINO DE LUZ
     const glowRadius = baseSize * (0.55 + (0.25 * transitionProgress));
     const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(1, glowRadius));
     gradient.addColorStop(0, '#ffffff'); 
@@ -282,6 +426,47 @@ function drawCore() {
 }
 
 drawCore();
+
+// --- BOTAO DE CAPTURA DO ÁUDIO DO SISTEMA (MÚSICA DAS CAIXINHAS) ---
+const musicSyncBtn = document.getElementById('musicSyncBtn');
+
+musicSyncBtn.addEventListener('click', async () => {
+    if (!isMusicSyncActive) {
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: {
+                    suppressLocalAudioPlayback: false
+                }
+            });
+
+            const audioTrack = stream.getAudioTracks()[0];
+            if (!audioTrack) {
+                alert("⚠️ Atenção: Na janela do navegador, você precisa MARCAR a caixinha 'Compartilhar áudio' no canto inferior!");
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
+
+            // Ouve o encerramento do compartilhamento pelo próprio navegador
+            audioTrack.onended = () => {
+                isMusicSyncActive = false;
+                musicSyncBtn.classList.remove('active');
+            };
+
+            setupAudioAnalyser(stream);
+            isMusicSyncActive = true;
+            musicSyncBtn.classList.add('active');
+
+        } catch (err) {
+            console.error("Captura cancelada ou não permitida:", err);
+            isMusicSyncActive = false;
+            musicSyncBtn.classList.remove('active');
+        }
+    } else {
+        isMusicSyncActive = false;
+        musicSyncBtn.classList.remove('active');
+    }
+});
 
 // --- CONTROLE DE ÁUDIO & MUTE ---
 const audioInicio = new Audio('som_inicio.mp3');
@@ -360,7 +545,7 @@ form.addEventListener('submit', async (e) => {
     shockwaveAlpha = 0.9;
     shockwaveActive = true;
 
-    isProcessing = true; // Ativa a atração de partículas ao centro
+    isProcessing = true;
     playAudio(audioInicio);
 
     appendUserMessage(text);
@@ -382,7 +567,7 @@ form.addEventListener('submit', async (e) => {
             if (isLongResponse) {
                 playAudio(audioFinal);
             }
-            isProcessing = false; // Desativa a atração de partículas
+            isProcessing = false;
         });
 
     } catch (err) {
